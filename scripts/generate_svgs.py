@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import math
 import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 import xml.etree.ElementTree as ET
 
 
@@ -24,25 +25,19 @@ class DSubSpec:
     file_tag: str
     pin_count: int
     rows: int
+    row_counts: Optional[List[int]]
+    row_offsets: Optional[List[float]]
     shell_size: str
     mounting_hole_pitch_mm: float
     flange_outer_width_mm: float
+    shell_height_mm: Optional[float]
+    screw_hole_dia_mm: Optional[float]
     h_pitch_mm: float
     v_pitch_mm: float
 
 
-SPECS: List[DSubSpec] = [
-    DSubSpec("DE-9 (Standard)", "de_9_std", 9, 2, "E", 24.99, 30.81, 2.77, 2.84),
-    DSubSpec("DA-15 (Standard)", "da_15_std", 15, 2, "A", 33.32, 39.14, 2.77, 2.84),
-    DSubSpec("DB-25 (Standard)", "db_25_std", 25, 2, "B", 47.04, 53.03, 2.77, 2.84),
-    DSubSpec("DC-37 (Standard)", "dc_37_std", 37, 2, "C", 63.50, 69.32, 2.77, 2.84),
-    DSubSpec("DD-50 (Standard)", "dd_50_std", 50, 3, "D", 61.11, 66.93, 2.77, 2.84),
-    DSubSpec("DE-15 (HD15)", "de_15_hd", 15, 3, "E", 24.99, 30.81, 2.29, 1.98),
-    DSubSpec("DA-26 (HD26)", "da_26_hd", 26, 3, "A", 33.32, 39.14, 2.29, 1.98),
-    DSubSpec("DB-44 (HD44)", "db_44_hd", 44, 3, "B", 47.04, 53.04, 2.29, 1.98),
-    DSubSpec("DC-62 (HD62)", "dc_62_hd", 62, 3, "C", 63.50, 69.32, 2.29, 1.98),
-    DSubSpec("DD-78 (HD78)", "dd_78_hd", 78, 3, "D", 61.11, 66.93, 2.29, 1.98),
-]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CATALOG_PATH = PROJECT_ROOT / "src" / "data" / "catalog.json"
 
 
 SHELL_GEOMETRY: Dict[str, Dict[str, Dict[str, float]]] = {
@@ -216,15 +211,47 @@ def distribute_pins(pin_count: int, rows: int) -> List[int]:
     raise ValueError("rows must be 2 or 3")
 
 
-def generate_pin_positions(pin_count: int, rows: int, h: float, v: float, view: str) -> List[Dict[str, float | int]]:
-    counts = distribute_pins(pin_count, rows)
-    shifts = [0.0, h / 2.0] if rows == 2 else [0.0, h / 2.0, 0.0]
+def row_offsets_for_counts(counts: List[int], h_pitch: float, stagger: List[float]) -> List[float]:
+    group_max: Dict[float, int] = {}
+    for idx, count in enumerate(counts):
+        shift = stagger[idx]
+        group_max[shift] = max(group_max.get(shift, 0), count)
+
+    offsets: List[float] = []
+    for idx, count in enumerate(counts):
+        shift = stagger[idx]
+        max_count = group_max[shift]
+        center_offset = ((max_count - count) * h_pitch) / 2.0
+        offsets.append(shift + center_offset)
+    return offsets
+
+
+def generate_pin_positions(
+    pin_count: int,
+    rows: int,
+    h: float,
+    v: float,
+    view: str,
+    row_counts: Optional[List[int]] = None,
+    row_offsets: Optional[List[float]] = None,
+) -> List[Dict[str, float | int]]:
+    counts = row_counts or distribute_pins(pin_count, rows)
+    if sum(counts) != pin_count:
+        raise ValueError(f"row_counts sum {sum(counts)} != pin_count {pin_count}")
+    if len(counts) != rows:
+        raise ValueError(f"row_counts length {len(counts)} != rows {rows}")
+
+    shifts = [(h / 2.0 if (idx % 2 == 1) else 0.0) for idx in range(rows)]
+    if row_offsets is None:
+        row_offsets = row_offsets_for_counts(counts, h, shifts)
+    elif len(row_offsets) != rows:
+        raise ValueError(f"row_offsets length {len(row_offsets)} != rows {rows}")
 
     pins: List[Dict[str, float | int]] = []
     n = 1
     for r, cnt in enumerate(counts):
         for i in range(cnt):
-            pins.append({"n": n, "row": r, "x": i * h + shifts[r], "y": r * v})
+            pins.append({"n": n, "row": r, "x": i * h + row_offsets[r], "y": r * v})
             n += 1
 
     min_x = min(float(p["x"]) for p in pins)
@@ -254,7 +281,7 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     margin_left, margin_right, margin_top, margin_bottom = 38.0, 38.0, 30.0, 28.0
 
     outer_w = spec.flange_outer_width_mm
-    outer_h = SHELL_GEOMETRY[spec.shell_size][gender]["flange_h"]
+    outer_h = spec.shell_height_mm or SHELL_GEOMETRY[spec.shell_size][gender]["flange_h"]
     opening_top_w = SHELL_GEOMETRY[spec.shell_size][gender]["opening_top_w"]
     opening_h = SHELL_GEOMETRY[spec.shell_size][gender]["opening_h"]
     hole_pitch = spec.mounting_hole_pitch_mm
@@ -285,13 +312,22 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
         fill="none", stroke="black", stroke_width=fmt(0.30),
     ))
 
-    hole_r = 2.0
+    hole_dia = spec.screw_hole_dia_mm or 4.0
+    hole_r = hole_dia / 2.0
     hcx1 = cx - hole_pitch / 2.0
     hcx2 = cx + hole_pitch / 2.0
     add_circle(g, hcx1, cy, hole_r, sw=0.25, fill="none")
     add_circle(g, hcx2, cy, hole_r, sw=0.25, fill="none")
 
-    pins = generate_pin_positions(spec.pin_count, spec.rows, spec.h_pitch_mm, spec.v_pitch_mm, view=view)
+    pins = generate_pin_positions(
+        spec.pin_count,
+        spec.rows,
+        spec.h_pitch_mm,
+        spec.v_pitch_mm,
+        view=view,
+        row_counts=spec.row_counts,
+        row_offsets=spec.row_offsets,
+    )
 
     pxs = [float(p["x"]) for p in pins]
     pys = [float(p["y"]) for p in pins]
@@ -327,7 +363,12 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     opening_path = rounded_polygon_path(trap_pts, corner_r)
     g.append(svg_el("path", d=opening_path, fill="none", stroke="black", stroke_width=fmt(0.25)))
 
-    pin_r = 0.55 if spec.rows == 2 else 0.45
+    if spec.rows == 2:
+        pin_r = 0.55
+    elif spec.rows == 3:
+        pin_r = 0.45
+    else:
+        pin_r = 0.40
     pin_fill = "black" if gender == "male" else "white"
     for p in pins:
         x = cx + float(p["x"])
@@ -353,18 +394,23 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
         x1 = cx + float(top_row[0]["x"])
         x2 = cx + float(top_row[1]["x"])
         y = cy + float(top_row[0]["y"]) - 6.5
-        dim_h_simple(g, x1, x2, y, f"H={spec.h_pitch_mm:.2f} mm")
+        dim_h_simple(g, x1, x2, y, f"H pitch={spec.h_pitch_mm:.2f} mm")
 
     if spec.rows >= 2:
         r0 = sorted([p for p in pins if int(p["row"]) == 0], key=lambda pp: float(pp["x"]))[0]
         r1 = sorted([p for p in pins if int(p["row"]) == 1], key=lambda pp: float(pp["x"]))[0]
         y1 = cy + float(r0["y"])
         y2 = cy + float(r1["y"])
-        dim_v_simple_left(g, y1, y2, ox - 18.0, f"V={spec.v_pitch_mm:.2f} mm")
+        dim_v_simple_left(g, y1, y2, ox - 18.0, f"V pitch={spec.v_pitch_mm:.2f} mm")
 
         dx = abs((cx + float(r1["x"])) - (cx + float(r0["x"])))
-        dim_h_simple(g, cx + float(r0["x"]), cx + float(r1["x"]), cy + opening_h_eff / 2.0 + 4.0,
-                     f"Delta={dx:.2f} mm")
+        dim_h_simple(
+            g,
+            cx + float(r0["x"]),
+            cx + float(r1["x"]),
+            cy + opening_h_eff / 2.0 + 4.0,
+            f"Delta={dx:.2f} mm",
+        )
 
     if include_caption:
         add_text(g, cx, oy + outer_h + margin_bottom - 8.0,
@@ -374,13 +420,43 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     return ET.tostring(svg, encoding="unicode")
 
 
+def load_specs() -> List[DSubSpec]:
+    if not CATALOG_PATH.exists():
+        raise SystemExit(f"Missing catalog: {CATALOG_PATH}")
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    specs: List[DSubSpec] = []
+    for item in catalog.get("connectors", []):
+        row_counts = item.get("row_counts")
+        rows = item.get("rows") or (len(row_counts) if row_counts else item.get("rows"))
+        if rows is None:
+            raise SystemExit(f"Connector {item.get('id')} missing rows")
+        if row_counts and len(row_counts) != rows:
+            raise SystemExit(f"Connector {item.get('id')} row_counts length != rows")
+        specs.append(DSubSpec(
+            label=item["name"],
+            file_tag=item["id"],
+            pin_count=item["pins"],
+            rows=rows,
+            row_counts=row_counts,
+            row_offsets=item.get("row_offsets"),
+            shell_size=item["shell"],
+            mounting_hole_pitch_mm=item["mounting_hole_pitch_mm"],
+            flange_outer_width_mm=item["flange_outer_width_mm"],
+            shell_height_mm=item.get("shell_height_mm"),
+            screw_hole_dia_mm=item.get("screw_hole_dia_mm"),
+            h_pitch_mm=item["h_pitch_mm"],
+            v_pitch_mm=item["v_pitch_mm"],
+        ))
+    return specs
+
+
 def generate_all(out_dir: Path, include_caption: bool = True) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     genders = ["male", "female"]
     views = ["outside", "solder"]
 
     written = 0
-    for spec in SPECS:
+    for spec in load_specs():
         for gender in genders:
             for view in views:
                 svg = generate_svg(spec, gender, view, include_caption=include_caption)

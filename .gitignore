@@ -3,3 +3,5 @@
 __pycache__/
 *.pyc
 dist/
+dist_build/
+dist__old_*/

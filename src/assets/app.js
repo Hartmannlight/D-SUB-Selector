@@ -66,7 +66,8 @@ function updateSpecInfo() {
     elSpecInfo.textContent = "";
     return;
   }
-  elSpecInfo.textContent = `${spec.pins} pins · ${spec.rows} rows · ${spec.shell} shell`;
+  const counts = spec.row_counts ? spec.row_counts.join("-") : "auto";
+  elSpecInfo.textContent = `${spec.pins} pins · ${spec.rows} rows (${counts}) · ${spec.shell} shell`;
 }
 
 async function render() {
