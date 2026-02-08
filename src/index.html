@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>D-Sub Selector</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow">D-Sub Connector Library</p>
+        <h1>Pick a connector, get a clean technical SVG.</h1>
+        <p class="lede">
+          Standard and high-density variants with accurate pin geometry, ready for
+          documentation or CAD reference.
+        </p>
+      </header>
+
+      <main class="main">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Selector</h2>
+            <p class="panel-note">Choose the format and view for instant preview.</p>
+          </div>
+
+          <div class="controls">
+            <label>
+              <span>Connector type</span>
+              <select id="selType"></select>
+            </label>
+            <label>
+              <span>Gender</span>
+              <select id="selGender"></select>
+            </label>
+            <label>
+              <span>View</span>
+              <select id="selView"></select>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="btnOpenSvg" class="primary">Open SVG</button>
+            <button id="btnDownloadSvg">Download SVG</button>
+          </div>
+
+          <div class="status" id="status"></div>
+        </section>
+
+        <section class="preview">
+          <div class="preview-head">
+            <h2>Preview</h2>
+            <div class="spec" id="specInfo"></div>
+          </div>
+          <div class="preview-canvas" id="preview"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        Generated SVGs are static assets. No tracking, no cookies, just files.
+      </footer>
+    </div>
+
+    <script type="module" src="assets/app.js"></script>
+  </body>
+</html>

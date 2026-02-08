@@ -1,0 +1,132 @@
+{
+  "connectors": [
+    {
+      "id": "de_9_std",
+      "name": "DE-9 (Standard)",
+      "pins": 9,
+      "rows": 2,
+      "shell": "E",
+      "mounting_hole_pitch_mm": 24.99,
+      "flange_outer_width_mm": 30.81,
+      "h_pitch_mm": 2.77,
+      "v_pitch_mm": 2.84,
+      "usage": "RS-232, legacy video, CAN, joysticks"
+    },
+    {
+      "id": "da_15_std",
+      "name": "DA-15 (Standard)",
+      "pins": 15,
+      "rows": 2,
+      "shell": "A",
+      "mounting_hole_pitch_mm": 33.32,
+      "flange_outer_width_mm": 39.14,
+      "h_pitch_mm": 2.77,
+      "v_pitch_mm": 2.84,
+      "usage": "AUI, legacy RGB, gameport"
+    },
+    {
+      "id": "db_25_std",
+      "name": "DB-25 (Standard)",
+      "pins": 25,
+      "rows": 2,
+      "shell": "B",
+      "mounting_hole_pitch_mm": 47.04,
+      "flange_outer_width_mm": 53.03,
+      "h_pitch_mm": 2.77,
+      "v_pitch_mm": 2.84,
+      "usage": "RS-232, parallel, SCSI, pro audio"
+    },
+    {
+      "id": "dc_37_std",
+      "name": "DC-37 (Standard)",
+      "pins": 37,
+      "rows": 2,
+      "shell": "C",
+      "mounting_hole_pitch_mm": 63.5,
+      "flange_outer_width_mm": 69.32,
+      "h_pitch_mm": 2.77,
+      "v_pitch_mm": 2.84,
+      "usage": "multi I/O, instrumentation"
+    },
+    {
+      "id": "dd_50_std",
+      "name": "DD-50 (Standard)",
+      "pins": 50,
+      "rows": 3,
+      "shell": "D",
+      "mounting_hole_pitch_mm": 61.11,
+      "flange_outer_width_mm": 66.93,
+      "h_pitch_mm": 2.77,
+      "v_pitch_mm": 2.84,
+      "usage": "early SCSI, control/measurement"
+    },
+    {
+      "id": "de_15_hd",
+      "name": "DE-15 (HD15)",
+      "pins": 15,
+      "rows": 3,
+      "shell": "E",
+      "mounting_hole_pitch_mm": 24.99,
+      "flange_outer_width_mm": 30.81,
+      "h_pitch_mm": 2.29,
+      "v_pitch_mm": 1.98,
+      "usage": "VGA"
+    },
+    {
+      "id": "da_26_hd",
+      "name": "DA-26 (HD26)",
+      "pins": 26,
+      "rows": 3,
+      "shell": "A",
+      "mounting_hole_pitch_mm": 33.32,
+      "flange_outer_width_mm": 39.14,
+      "h_pitch_mm": 2.29,
+      "v_pitch_mm": 1.98,
+      "usage": "industrial / automation"
+    },
+    {
+      "id": "db_44_hd",
+      "name": "DB-44 (HD44)",
+      "pins": 44,
+      "rows": 3,
+      "shell": "B",
+      "mounting_hole_pitch_mm": 47.04,
+      "flange_outer_width_mm": 53.04,
+      "h_pitch_mm": 2.29,
+      "v_pitch_mm": 1.98,
+      "usage": "DAQ / AV / control"
+    },
+    {
+      "id": "dc_62_hd",
+      "name": "DC-62 (HD62)",
+      "pins": 62,
+      "rows": 3,
+      "shell": "C",
+      "mounting_hole_pitch_mm": 63.5,
+      "flange_outer_width_mm": 69.32,
+      "h_pitch_mm": 2.29,
+      "v_pitch_mm": 1.98,
+      "usage": "measurement / robotics"
+    },
+    {
+      "id": "dd_78_hd",
+      "name": "DD-78 (HD78)",
+      "pins": 78,
+      "rows": 3,
+      "shell": "D",
+      "mounting_hole_pitch_mm": 61.11,
+      "flange_outer_width_mm": 66.93,
+      "h_pitch_mm": 2.29,
+      "v_pitch_mm": 1.98,
+      "usage": "high channel-count systems"
+    }
+  ],
+  "genders": [
+    { "id": "male", "name": "Male (plug)" },
+    { "id": "female", "name": "Female (receptacle)" }
+  ],
+  "views": [
+    { "id": "outside", "name": "Outside (mating face)" },
+    { "id": "solder", "name": "Solder side (rear view)" }
+  ]
+}
