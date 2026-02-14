@@ -212,17 +212,38 @@ def distribute_pins(pin_count: int, rows: int) -> List[int]:
 
 
 def row_offsets_for_counts(counts: List[int], h_pitch: float, stagger: List[float]) -> List[float]:
-    group_max: Dict[float, int] = {}
-    for idx, count in enumerate(counts):
-        shift = stagger[idx]
-        group_max[shift] = max(group_max.get(shift, 0), count)
+    """Calculate row offsets ensuring proper pin alignment.
+
+    Rows are grouped by their stagger value. Centering is calculated relative
+    to the maximum pin count WITHIN EACH GROUP, not globally.
+
+    For non-staggered rows (stagger=0), centering is quantized to whole pitch
+    steps so that pins align vertically across rows. This is critical for HD
+    connectors with unequal row counts (e.g., 9-9-8) where naive centering would
+    place the smaller row's pins under the staggered row instead of the other
+    non-staggered row.
+    """
+    # Separate rows into stagger groups
+    non_stagger_indices = [i for i in range(len(counts)) if stagger[i] == 0]
+    stagger_indices = [i for i in range(len(counts)) if stagger[i] != 0]
+
+    # Find max count in each group
+    non_stagger_max = max((counts[i] for i in non_stagger_indices), default=0)
+    stagger_max = max((counts[i] for i in stagger_indices), default=0)
 
     offsets: List[float] = []
     for idx, count in enumerate(counts):
-        shift = stagger[idx]
-        max_count = group_max[shift]
-        center_offset = ((max_count - count) * h_pitch) / 2.0
-        offsets.append(shift + center_offset)
+        if stagger[idx] == 0:
+            # Non-staggered: center relative to non-stagger group max
+            # Quantize to whole pitch steps for vertical alignment
+            raw_center = ((non_stagger_max - count) * h_pitch) / 2.0
+            center_offset = math.floor(raw_center / h_pitch) * h_pitch
+        else:
+            # Staggered: center relative to stagger group max
+            center_offset = ((stagger_max - count) * h_pitch) / 2.0
+
+        offsets.append(stagger[idx] + center_offset)
+
     return offsets
 
 
@@ -232,6 +253,7 @@ def generate_pin_positions(
     h: float,
     v: float,
     view: str,
+    gender: str,
     row_counts: Optional[List[int]] = None,
     row_offsets: Optional[List[float]] = None,
 ) -> List[Dict[str, float | int]]:
@@ -264,7 +286,18 @@ def generate_pin_positions(
     for p in pins:
         p["x"] = float(p["x"]) - cx
         p["y"] = float(p["y"]) - cy
-        if view == "solder":
+
+    # Pin 1 position convention:
+    # - Male (plug), mating face: Pin 1 at top-LEFT
+    # - Female (receptacle), mating face: Pin 1 at top-RIGHT
+    # For female, we mirror the X coordinates to flip pin positions
+    if gender == "female":
+        for p in pins:
+            p["x"] = -float(p["x"])
+
+    # Solder side view: looking from behind, so mirror X again
+    if view == "solder":
+        for p in pins:
             p["x"] = -float(p["x"])
 
     return pins
@@ -325,6 +358,7 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
         spec.h_pitch_mm,
         spec.v_pitch_mm,
         view=view,
+        gender=gender,
         row_counts=spec.row_counts,
         row_offsets=spec.row_offsets,
     )
@@ -343,10 +377,10 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     opening_h_eff = max(opening_h, pin_h + 2 * clearance_y)
     opening_top_w_eff = max(opening_top_w, pin_w + 2 * clearance_x)
 
-    bottom_w = opening_top_w_eff + 2.0 * math.tan(math.radians(side_angle_deg)) * opening_h_eff
-    bottom_w = min(bottom_w, outer_w - 6.0)
-
-    top_w = min(opening_top_w_eff, outer_w - 8.0)
+    # D-Sub "keystone" shape: top is WIDER, bottom is NARROWER
+    top_w = min(opening_top_w_eff, outer_w - 6.0)
+    bottom_w = top_w - 2.0 * math.tan(math.radians(side_angle_deg)) * opening_h_eff
+    bottom_w = max(bottom_w, pin_w + clearance_x)  # Ensure pins still fit
 
     top_y = cy - opening_h_eff / 2.0
     bot_y = cy + opening_h_eff / 2.0
@@ -420,10 +454,53 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     return ET.tostring(svg, encoding="unicode")
 
 
+def validate_connector(item: dict) -> List[str]:
+    """Validate connector specification, return list of errors."""
+    errors = []
+    cid = item.get("id", "unknown")
+    pins = item.get("pins", 0)
+    row_counts = item.get("row_counts", [])
+
+    # Check sum of row_counts equals total pins
+    if row_counts and sum(row_counts) != pins:
+        errors.append(f"{cid}: sum(row_counts)={sum(row_counts)} != pins={pins}")
+
+    # Check D-Sub pattern: staggered rows (odd indices) should have <= pins
+    # than adjacent non-staggered rows
+    if len(row_counts) >= 2:
+        for i in range(1, len(row_counts), 2):  # Odd indices (staggered rows)
+            staggered_count = row_counts[i]
+            # Compare with previous row (always exists)
+            if staggered_count > row_counts[i - 1]:
+                errors.append(
+                    f"{cid}: staggered row {i} has {staggered_count} pins > "
+                    f"row {i-1} with {row_counts[i-1]} pins"
+                )
+            # Compare with next row if exists
+            if i + 1 < len(row_counts) and staggered_count > row_counts[i + 1]:
+                errors.append(
+                    f"{cid}: staggered row {i} has {staggered_count} pins > "
+                    f"row {i+1} with {row_counts[i+1]} pins"
+                )
+
+    return errors
+
+
 def load_specs() -> List[DSubSpec]:
     if not CATALOG_PATH.exists():
         raise SystemExit(f"Missing catalog: {CATALOG_PATH}")
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+
+    # Validate all connectors first
+    all_errors = []
+    for item in catalog.get("connectors", []):
+        all_errors.extend(validate_connector(item))
+    if all_errors:
+        print("Catalog validation errors:")
+        for err in all_errors:
+            print(f"  - {err}")
+        raise SystemExit("Fix catalog errors before generating SVGs")
+
     specs: List[DSubSpec] = []
     for item in catalog.get("connectors", []):
         row_counts = item.get("row_counts")
