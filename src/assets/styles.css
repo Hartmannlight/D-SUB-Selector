@@ -203,6 +203,64 @@ button.primary {
   }
 }
 
+.notes-section {
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+  animation: fade-up 0.8s ease both;
+  animation-delay: 0.15s;
+}
+
+.notes-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.notes-head h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.notes-status {
+  font-size: 0.8rem;
+  color: var(--muted);
+  transition: opacity 0.3s ease;
+}
+
+.notes-status.saved {
+  color: #1c6a2c;
+}
+
+.notes-area {
+  width: 100%;
+  min-height: 120px;
+  padding: 14px 16px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafafa;
+  resize: vertical;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.notes-area:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(45, 75, 115, 0.1);
+}
+
+.notes-area::placeholder {
+  color: #999;
+}
+
 @media (max-width: 900px) {
   .main {
     grid-template-columns: 1fr;
