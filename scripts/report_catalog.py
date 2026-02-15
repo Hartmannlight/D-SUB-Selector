@@ -201,12 +201,37 @@ def _distribute_contacts(total_contacts: int, rows: int) -> list[int]:
     return counts
 
 
+def _normalize_three_row_pattern(counts: list[int]) -> list[int]:
+    """Normalize common transcriptions to the physical 3-row D-Sub pattern.
+
+    For staggered 3-row layouts, row 2 is the middle (staggered) row and is
+    typically the shortest row. Some sources list counts as a-a-(a-1) which
+    places the shorter row in row 3; we normalize this to a-(a-1)-a.
+    """
+    if len(counts) != 3:
+        return counts
+    if counts[0] == counts[1] and counts[2] == counts[0] - 1:
+        return [counts[0], counts[2], counts[0]]
+    return counts
+
+
+def _build_numbering_text(counts: list[int]) -> str:
+    start = 1
+    parts = []
+    for idx, count in enumerate(counts, 1):
+        end = start + count - 1
+        parts.append(f"row{idx} {start}-{end}")
+        start = end + 1
+    return "; ".join(parts)
+
+
 def _normalize_insert(raw_insert: dict[str, Any]) -> dict[str, Any]:
     counts = [int(v) for v in (raw_insert.get("contacts_per_row") or [])]
     rows = _to_int(raw_insert.get("rows")) or len(counts)
     total_contacts = _to_int(raw_insert.get("total_contacts")) or sum(counts)
     if not counts and total_contacts and rows:
         counts = _distribute_contacts(total_contacts, rows)
+    counts = _normalize_three_row_pattern(counts)
 
     if rows and len(counts) != rows:
         raise SystemExit(f"Invalid contacts_per_row length for rows={rows}: {counts}")
@@ -228,6 +253,13 @@ def _normalize_insert(raw_insert: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(numbering, dict):
         front_view = str(numbering.get("front_view") or "")
         solder_side_view = str(numbering.get("solder_side_view") or "")
+    if not front_view:
+        front_view = _build_numbering_text(counts)
+    elif _build_numbering_text(counts) != front_view and rows == 3:
+        # Keep numbering aligned with normalized geometry.
+        front_view = _build_numbering_text(counts)
+    if not solder_side_view:
+        solder_side_view = "mirrored"
 
     return {
         "total_contacts": int(total_contacts),
