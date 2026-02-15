@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import math
 import re
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 import xml.etree.ElementTree as ET
+
+from report_catalog import build_catalog
 
 
 Point = Tuple[float, float]
@@ -22,11 +23,14 @@ Point = Tuple[float, float]
 @dataclass(frozen=True)
 class DSubSpec:
     label: str
+    designation: str
+    density: str
     file_tag: str
     pin_count: int
     rows: int
     row_counts: Optional[List[int]]
     row_offsets: Optional[List[float]]
+    row_offset_mm: Optional[float]
     shell_size: str
     mounting_hole_pitch_mm: float
     flange_outer_width_mm: float
@@ -34,23 +38,39 @@ class DSubSpec:
     screw_hole_dia_mm: Optional[float]
     h_pitch_mm: float
     v_pitch_mm: float
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CATALOG_PATH = PROJECT_ROOT / "src" / "data" / "catalog.json"
+    contact_size: str
+    numbering_front: str
+    numbering_solder: str
+    panel_cutout: Optional[Dict[str, float]]
+    contact_male_min_mm: Optional[float]
+    contact_male_max_mm: Optional[float]
+    contact_female_entry_min_mm: Optional[float]
+    electrical_max_current_a: Optional[float]
+    electrical_dwv_v: Optional[float]
+    standards: List[str]
 
 
 SHELL_GEOMETRY: Dict[str, Dict[str, Dict[str, float]]] = {
-    "E": {"male": {"opening_top_w": 16.90, "opening_h": 8.30, "flange_h": 12.50},
-          "female": {"opening_top_w": 16.30, "opening_h": 7.90, "flange_h": 12.50}},
-    "A": {"male": {"opening_top_w": 25.25, "opening_h": 8.30, "flange_h": 12.50},
-          "female": {"opening_top_w": 24.60, "opening_h": 7.90, "flange_h": 12.50}},
-    "B": {"male": {"opening_top_w": 38.95, "opening_h": 8.30, "flange_h": 12.50},
-          "female": {"opening_top_w": 38.40, "opening_h": 7.90, "flange_h": 12.50}},
-    "C": {"male": {"opening_top_w": 55.40, "opening_h": 8.30, "flange_h": 12.50},
-          "female": {"opening_top_w": 54.80, "opening_h": 7.90, "flange_h": 12.50}},
-    "D": {"male": {"opening_top_w": 52.80, "opening_h": 11.15, "flange_h": 15.30},
-          "female": {"opening_top_w": 52.20, "opening_h": 10.90, "flange_h": 15.30}},
+    "E": {
+        "male": {"opening_top_w": 16.90, "opening_h": 8.30, "flange_h": 12.50},
+        "female": {"opening_top_w": 16.30, "opening_h": 7.90, "flange_h": 12.50},
+    },
+    "A": {
+        "male": {"opening_top_w": 25.25, "opening_h": 8.30, "flange_h": 12.50},
+        "female": {"opening_top_w": 24.60, "opening_h": 7.90, "flange_h": 12.50},
+    },
+    "B": {
+        "male": {"opening_top_w": 38.95, "opening_h": 8.30, "flange_h": 12.50},
+        "female": {"opening_top_w": 38.40, "opening_h": 7.90, "flange_h": 12.50},
+    },
+    "C": {
+        "male": {"opening_top_w": 55.40, "opening_h": 8.30, "flange_h": 12.50},
+        "female": {"opening_top_w": 54.80, "opening_h": 7.90, "flange_h": 12.50},
+    },
+    "D": {
+        "male": {"opening_top_w": 52.80, "opening_h": 11.15, "flange_h": 15.30},
+        "female": {"opening_top_w": 52.20, "opening_h": 10.90, "flange_h": 15.30},
+    },
 }
 
 
@@ -61,38 +81,70 @@ def fmt(x: float) -> str:
 
 def svg_el(tag: str, **attrs) -> ET.Element:
     el = ET.Element(tag)
-    for k, v in attrs.items():
-        if v is None:
+    for key, value in attrs.items():
+        if value is None:
             continue
-        el.set(k.replace("_", "-"), str(v))
+        el.set(key.replace("_", "-"), str(value))
     return el
 
 
-def add_line(parent: ET.Element, x1: float, y1: float, x2: float, y2: float,
-             sw: float = 0.25, dash: str | None = None) -> None:
-    a = {"x1": fmt(x1), "y1": fmt(y1), "x2": fmt(x2), "y2": fmt(y2),
-         "stroke": "black", "stroke_width": fmt(sw), "fill": "none"}
+def add_line(
+    parent: ET.Element,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    sw: float = 0.25,
+    dash: str | None = None,
+) -> None:
+    attrs = {
+        "x1": fmt(x1),
+        "y1": fmt(y1),
+        "x2": fmt(x2),
+        "y2": fmt(y2),
+        "stroke": "black",
+        "stroke_width": fmt(sw),
+        "fill": "none",
+    }
     if dash:
-        a["stroke_dasharray"] = dash
-    parent.append(svg_el("line", **a))
+        attrs["stroke_dasharray"] = dash
+    parent.append(svg_el("line", **attrs))
 
 
-def add_circle(parent: ET.Element, cx: float, cy: float, r: float,
-               sw: float = 0.25, fill: str = "white") -> None:
-    parent.append(svg_el("circle", cx=fmt(cx), cy=fmt(cy), r=fmt(r),
-                         stroke="black", stroke_width=fmt(sw), fill=fill))
+def add_circle(parent: ET.Element, cx: float, cy: float, r: float, sw: float = 0.25, fill: str = "white") -> None:
+    parent.append(
+        svg_el(
+            "circle",
+            cx=fmt(cx),
+            cy=fmt(cy),
+            r=fmt(r),
+            stroke="black",
+            stroke_width=fmt(sw),
+            fill=fill,
+        )
+    )
 
 
-def add_text(parent: ET.Element, x: float, y: float, text: str,
-             size: float = 2.2, anchor: str = "middle", baseline: str = "middle",
-             weight: str | None = None) -> None:
-    t = svg_el("text",
-               x=fmt(x), y=fmt(y),
-               fill="black",
-               font_size=fmt(size),
-               text_anchor=anchor,
-               dominant_baseline=baseline,
-               font_family="Arial, Helvetica, sans-serif")
+def add_text(
+    parent: ET.Element,
+    x: float,
+    y: float,
+    text: str,
+    size: float = 2.2,
+    anchor: str = "middle",
+    baseline: str = "middle",
+    weight: str | None = None,
+) -> None:
+    t = svg_el(
+        "text",
+        x=fmt(x),
+        y=fmt(y),
+        fill="black",
+        font_size=fmt(size),
+        text_anchor=anchor,
+        dominant_baseline=baseline,
+        font_family="Arial, Helvetica, sans-serif",
+    )
     if weight:
         t.set("font-weight", weight)
     t.text = text
@@ -110,6 +162,7 @@ def add_arrow(parent: ET.Element, x: float, y: float, direction: str, size: floa
         pts = [(x, y), (x - size / 2, y - size), (x + size / 2, y - size)]
     else:
         raise ValueError(direction)
+
     pts_str = " ".join(f"{fmt(px)},{fmt(py)}" for px, py in pts)
     parent.append(svg_el("polygon", points=pts_str, fill="black", stroke="black", stroke_width="0"))
 
@@ -208,40 +261,30 @@ def distribute_pins(pin_count: int, rows: int) -> List[int]:
             counts[0] += 1
             counts[2] += 1
         return counts
-    raise ValueError("rows must be 2 or 3")
+    if rows == 4:
+        base = pin_count // 4
+        rem = pin_count % 4
+        counts = [base, base, base, base]
+        for i in range(rem):
+            counts[i] += 1
+        return counts
+    raise ValueError("rows must be 2, 3, or 4")
 
 
 def row_offsets_for_counts(counts: List[int], h_pitch: float, stagger: List[float]) -> List[float]:
-    """Calculate row offsets ensuring proper pin alignment.
-
-    Rows are grouped by their stagger value. Centering is calculated relative
-    to the maximum pin count WITHIN EACH GROUP, not globally.
-
-    For non-staggered rows (stagger=0), centering is quantized to whole pitch
-    steps so that pins align vertically across rows. This is critical for HD
-    connectors with unequal row counts (e.g., 9-9-8) where naive centering would
-    place the smaller row's pins under the staggered row instead of the other
-    non-staggered row.
-    """
-    # Separate rows into stagger groups
     non_stagger_indices = [i for i in range(len(counts)) if stagger[i] == 0]
     stagger_indices = [i for i in range(len(counts)) if stagger[i] != 0]
 
-    # Find max count in each group
     non_stagger_max = max((counts[i] for i in non_stagger_indices), default=0)
     stagger_max = max((counts[i] for i in stagger_indices), default=0)
 
     offsets: List[float] = []
     for idx, count in enumerate(counts):
         if stagger[idx] == 0:
-            # Non-staggered: center relative to non-stagger group max
-            # Quantize to whole pitch steps for vertical alignment
             raw_center = ((non_stagger_max - count) * h_pitch) / 2.0
             center_offset = math.floor(raw_center / h_pitch) * h_pitch
         else:
-            # Staggered: center relative to stagger group max
             center_offset = ((stagger_max - count) * h_pitch) / 2.0
-
         offsets.append(stagger[idx] + center_offset)
 
     return offsets
@@ -256,6 +299,7 @@ def generate_pin_positions(
     gender: str,
     row_counts: Optional[List[int]] = None,
     row_offsets: Optional[List[float]] = None,
+    row_offset_mm: Optional[float] = None,
 ) -> List[Dict[str, float | int]]:
     counts = row_counts or distribute_pins(pin_count, rows)
     if sum(counts) != pin_count:
@@ -263,9 +307,11 @@ def generate_pin_positions(
     if len(counts) != rows:
         raise ValueError(f"row_counts length {len(counts)} != rows {rows}")
 
-    shifts = [(h / 2.0 if (idx % 2 == 1) else 0.0) for idx in range(rows)]
     if row_offsets is None:
-        row_offsets = row_offsets_for_counts(counts, h, shifts)
+        stagger = [row_offset_mm if (idx % 2 == 1) else 0.0 for idx in range(rows)]
+        if row_offset_mm is None:
+            stagger = [(h / 2.0 if (idx % 2 == 1) else 0.0) for idx in range(rows)]
+        row_offsets = row_offsets_for_counts(counts, h, stagger)
     elif len(row_offsets) != rows:
         raise ValueError(f"row_offsets length {len(row_offsets)} != rows {rows}")
 
@@ -288,14 +334,13 @@ def generate_pin_positions(
         p["y"] = float(p["y"]) - cy
 
     # Pin 1 position convention:
-    # - Male (plug), mating face: Pin 1 at top-LEFT
-    # - Female (receptacle), mating face: Pin 1 at top-RIGHT
-    # For female, we mirror the X coordinates to flip pin positions
+    # - Male (plug), mating face: Pin 1 at top-left
+    # - Female (receptacle), mating face: Pin 1 at top-right
     if gender == "female":
         for p in pins:
             p["x"] = -float(p["x"])
 
-    # Solder side view: looking from behind, so mirror X again
+    # Solder side view is mirrored relative to mating face.
     if view == "solder":
         for p in pins:
             p["x"] = -float(p["x"])
@@ -310,8 +355,37 @@ def sanitize_stem(stem: str) -> str:
     return stem
 
 
+def wrap_text(text: str, max_chars: int = 32) -> List[str]:
+    words = text.split()
+    if not words:
+        return []
+
+    lines: List[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def add_info_block(parent: ET.Element, x: float, y: float, title: str, lines: List[str]) -> float:
+    if not lines:
+        return y
+    add_text(parent, x, y, title, size=2.05, anchor="start", baseline="hanging", weight="bold")
+    y += 2.9
+    for line in lines:
+        add_text(parent, x, y, line, size=1.8, anchor="start", baseline="hanging")
+        y += 2.4
+    return y + 1.4
+
+
 def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool = True) -> str:
-    margin_left, margin_right, margin_top, margin_bottom = 38.0, 38.0, 30.0, 28.0
+    margin_left, margin_right, margin_top, margin_bottom = 38.0, 148.0, 30.0, 48.0
 
     outer_w = spec.flange_outer_width_mm
     outer_h = spec.shell_height_mm or SHELL_GEOMETRY[spec.shell_size][gender]["flange_h"]
@@ -331,26 +405,53 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     )
 
     svg.append(svg_el("rect", x="0", y="0", width=fmt(width), height=fmt(height), fill="white"))
-    g = svg_el("g")
-    svg.append(g)
+
+    root = svg_el("g")
+    svg.append(root)
+
+    layers: Dict[str, ET.Element] = {}
+
+    def layer(layer_id: str) -> ET.Element:
+        grp = svg_el("g", data_layer=layer_id)
+        layers[layer_id] = grp
+        root.append(grp)
+        return grp
+
+    g_base = layer("base")
+    g_pin_labels = layer("pin_labels")
+    g_flange_dim = layer("flange_dimensions")
+    g_pitch_dim = layer("pitch_dimensions")
+    g_panel_cutout = layer("panel_cutout")
+    g_insert_info = layer("insert_info")
+    g_contacts_info = layer("contacts_info")
+    g_electrical_info = layer("electrical_info")
+    g_standards_info = layer("standards_info")
+    g_caption = layer("caption")
 
     ox, oy = margin_left, margin_top
     cx, cy = ox + outer_w / 2.0, oy + outer_h / 2.0
 
-    g.append(svg_el(
-        "rect",
-        x=fmt(ox), y=fmt(oy),
-        width=fmt(outer_w), height=fmt(outer_h),
-        rx=fmt(1.2), ry=fmt(1.2),
-        fill="none", stroke="black", stroke_width=fmt(0.30),
-    ))
+    g_base.append(
+        svg_el(
+            "rect",
+            x=fmt(ox),
+            y=fmt(oy),
+            width=fmt(outer_w),
+            height=fmt(outer_h),
+            rx=fmt(1.2),
+            ry=fmt(1.2),
+            fill="none",
+            stroke="black",
+            stroke_width=fmt(0.30),
+        )
+    )
 
     hole_dia = spec.screw_hole_dia_mm or 4.0
     hole_r = hole_dia / 2.0
     hcx1 = cx - hole_pitch / 2.0
     hcx2 = cx + hole_pitch / 2.0
-    add_circle(g, hcx1, cy, hole_r, sw=0.25, fill="none")
-    add_circle(g, hcx2, cy, hole_r, sw=0.25, fill="none")
+    add_circle(g_base, hcx1, cy, hole_r, sw=0.25, fill="none")
+    add_circle(g_base, hcx2, cy, hole_r, sw=0.25, fill="none")
 
     pins = generate_pin_positions(
         spec.pin_count,
@@ -361,14 +462,15 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
         gender=gender,
         row_counts=spec.row_counts,
         row_offsets=spec.row_offsets,
+        row_offset_mm=spec.row_offset_mm,
     )
 
     pxs = [float(p["x"]) for p in pins]
     pys = [float(p["y"]) for p in pins]
     pin_min_x, pin_max_x = min(pxs), max(pxs)
     pin_min_y, pin_max_y = min(pys), max(pys)
-    pin_w = (pin_max_x - pin_min_x)
-    pin_h = (pin_max_y - pin_min_y)
+    pin_w = pin_max_x - pin_min_x
+    pin_h = pin_max_y - pin_min_y
 
     side_angle_deg = 10.0
     clearance_x = 3.0
@@ -377,10 +479,9 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     opening_h_eff = max(opening_h, pin_h + 2 * clearance_y)
     opening_top_w_eff = max(opening_top_w, pin_w + 2 * clearance_x)
 
-    # D-Sub "keystone" shape: top is WIDER, bottom is NARROWER
     top_w = min(opening_top_w_eff, outer_w - 6.0)
     bottom_w = top_w - 2.0 * math.tan(math.radians(side_angle_deg)) * opening_h_eff
-    bottom_w = max(bottom_w, pin_w + clearance_x)  # Ensure pins still fit
+    bottom_w = max(bottom_w, pin_w + clearance_x)
 
     top_y = cy - opening_h_eff / 2.0
     bot_y = cy + opening_h_eff / 2.0
@@ -395,19 +496,14 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
     ]
     corner_r = min(2.2, opening_h_eff * 0.22, top_w * 0.18)
     opening_path = rounded_polygon_path(trap_pts, corner_r)
-    g.append(svg_el("path", d=opening_path, fill="none", stroke="black", stroke_width=fmt(0.25)))
+    g_base.append(svg_el("path", d=opening_path, fill="none", stroke="black", stroke_width=fmt(0.25)))
 
-    if spec.rows == 2:
-        pin_r = 0.55
-    elif spec.rows == 3:
-        pin_r = 0.45
-    else:
-        pin_r = 0.40
+    pin_r = 0.55 if spec.rows == 2 else (0.45 if spec.rows == 3 else 0.40)
     pin_fill = "black" if gender == "male" else "white"
     for p in pins:
         x = cx + float(p["x"])
         y = cy + float(p["y"])
-        add_circle(g, x, y, pin_r, sw=0.18, fill=pin_fill)
+        add_circle(g_base, x, y, pin_r, sw=0.18, fill=pin_fill)
 
     label_x_pad = 4.0
     for r in range(spec.rows):
@@ -415,85 +511,129 @@ def generate_svg(spec: DSubSpec, gender: str, view: str, include_caption: bool =
         left_pin = row_pins[0]
         right_pin = row_pins[-1]
         y = cy + float(left_pin["y"])
+        add_text(g_pin_labels, ox - label_x_pad, y, str(int(left_pin["n"])), size=2.2, anchor="end", weight="bold")
+        add_text(
+            g_pin_labels,
+            ox + outer_w + label_x_pad,
+            y,
+            str(int(right_pin["n"])),
+            size=2.2,
+            anchor="start",
+            weight="bold",
+        )
 
-        add_text(g, ox - label_x_pad, y, str(int(left_pin["n"])), size=2.2, anchor="end", weight="bold")
-        add_text(g, ox + outer_w + label_x_pad, y, str(int(right_pin["n"])), size=2.2, anchor="start", weight="bold")
-
-    dim_horizontal(g, ox, ox + outer_w, oy - 16.0, oy, f"{outer_w:.2f} mm")
-    dim_horizontal(g, hcx1, hcx2, oy + outer_h + 16.0, cy, f"{hole_pitch:.2f} mm")
-    dim_vertical(g, oy, oy + outer_h, ox + outer_w + 18.0, ox + outer_w, f"{outer_h:.2f} mm")
+    dim_horizontal(g_flange_dim, ox, ox + outer_w, oy - 16.0, oy, f"{outer_w:.2f} mm")
+    dim_horizontal(g_flange_dim, hcx1, hcx2, oy + outer_h + 16.0, cy, f"{hole_pitch:.2f} mm")
+    dim_vertical(g_flange_dim, oy, oy + outer_h, ox + outer_w + 12.0, ox + outer_w, f"{outer_h:.2f} mm")
 
     top_row = sorted([p for p in pins if int(p["row"]) == 0], key=lambda pp: float(pp["x"]))
     if len(top_row) >= 2:
         x1 = cx + float(top_row[0]["x"])
         x2 = cx + float(top_row[1]["x"])
-        y = cy + float(top_row[0]["y"]) - 6.5
-        dim_h_simple(g, x1, x2, y, f"H pitch={spec.h_pitch_mm:.2f} mm")
+        y = top_y - 3.5
+        dim_h_simple(g_pitch_dim, x1, x2, y, f"H pitch={spec.h_pitch_mm:.3f} mm")
 
     if spec.rows >= 2:
         r0 = sorted([p for p in pins if int(p["row"]) == 0], key=lambda pp: float(pp["x"]))[0]
         r1 = sorted([p for p in pins if int(p["row"]) == 1], key=lambda pp: float(pp["x"]))[0]
         y1 = cy + float(r0["y"])
         y2 = cy + float(r1["y"])
-        dim_v_simple_left(g, y1, y2, ox - 18.0, f"V pitch={spec.v_pitch_mm:.2f} mm")
+        dim_v_simple_left(g_pitch_dim, y1, y2, ox - 18.0, f"V pitch={spec.v_pitch_mm:.3f} mm")
 
         dx = abs((cx + float(r1["x"])) - (cx + float(r0["x"])))
+        offset_val = spec.row_offset_mm if spec.row_offset_mm is not None else dx
         dim_h_simple(
-            g,
+            g_pitch_dim,
             cx + float(r0["x"]),
             cx + float(r1["x"]),
-            cy + opening_h_eff / 2.0 + 4.0,
-            f"Delta={dx:.2f} mm",
+            cy + opening_h_eff / 2.0 + 7.5,
+            f"Row offset={offset_val:.3f} mm",
         )
 
+    info_x = ox + outer_w + 26.0
+
+    row_counts_txt = "-".join(str(v) for v in (spec.row_counts or []))
+    insert_lines = [
+        f"Density: {spec.density}",
+        f"Rows: {spec.rows} ({row_counts_txt})",
+        f"Contact size: {spec.contact_size}",
+        f"Pitch X/Y: {spec.h_pitch_mm:.3f}/{spec.v_pitch_mm:.3f} mm",
+    ]
+    if spec.row_offset_mm is not None:
+        insert_lines.append(f"Offset: {spec.row_offset_mm:.3f} mm")
+    if spec.numbering_front:
+        insert_lines.extend(wrap_text(f"Front: {spec.numbering_front}", max_chars=34)[:2])
+    cursor_y = add_info_block(g_insert_info, info_x, oy + 0.8, "Insert", insert_lines)
+
+    contact_lines: List[str] = []
+    if spec.contact_male_min_mm is not None and spec.contact_male_max_mm is not None:
+        contact_lines.append(f"Male pin: {spec.contact_male_min_mm:.3f}-{spec.contact_male_max_mm:.3f} mm")
+    if spec.contact_female_entry_min_mm is not None:
+        contact_lines.append(f"Female entry >= {spec.contact_female_entry_min_mm:.3f} mm")
+    cursor_y = add_info_block(g_contacts_info, info_x, cursor_y, "Contacts", contact_lines)
+
+    electrical_lines: List[str] = []
+    if spec.electrical_max_current_a is not None:
+        electrical_lines.append(f"Current: {spec.electrical_max_current_a:.1f} A/contact")
+    if spec.electrical_dwv_v is not None:
+        electrical_lines.append(f"DWV: {spec.electrical_dwv_v:.0f} V RMS")
+    cursor_y = add_info_block(g_electrical_info, info_x, cursor_y, "Electrical", electrical_lines)
+
+    standards_lines: List[str] = []
+    for std in spec.standards:
+        standards_lines.extend(wrap_text(std, max_chars=34))
+    cursor_y = add_info_block(g_standards_info, info_x, cursor_y, "Standards", standards_lines)
+
+    if spec.panel_cutout:
+        panel = spec.panel_cutout
+        panel_lines = [
+            (
+                f"T/B/H: {panel['top_width']:.2f}/"
+                f"{panel['bottom_width']:.2f}/"
+                f"{panel['height']:.2f} mm"
+            ),
+        ]
+        radius = panel.get("corner_radius")
+        if radius is not None:
+            panel_lines.append(f"Angle {panel['side_angle_deg']:.1f} deg, R {radius:.2f} mm")
+        add_info_block(g_panel_cutout, info_x, cursor_y, "Panel cutout", panel_lines)
+
     if include_caption:
-        add_text(g, cx, oy + outer_h + margin_bottom - 8.0,
-                 f"{spec.label} - {gender} - {view}",
-                 size=2.2, anchor="middle", baseline="middle")
+        add_text(
+            g_caption,
+            cx,
+            oy + outer_h + margin_bottom - 8.0,
+            f"{spec.designation} - {gender} - {view}",
+            size=2.2,
+            anchor="middle",
+            baseline="middle",
+        )
 
     return ET.tostring(svg, encoding="unicode")
 
 
-def validate_connector(item: dict) -> List[str]:
-    """Validate connector specification, return list of errors."""
+def validate_connector(item: dict[str, Any]) -> List[str]:
     errors = []
     cid = item.get("id", "unknown")
-    pins = item.get("pins", 0)
-    row_counts = item.get("row_counts", [])
+    insert = item.get("insert") or {}
+    pins = int(insert.get("total_contacts") or 0)
+    row_counts = [int(v) for v in (insert.get("contacts_per_row") or [])]
+    rows = int(insert.get("rows") or len(row_counts))
 
-    # Check sum of row_counts equals total pins
     if row_counts and sum(row_counts) != pins:
-        errors.append(f"{cid}: sum(row_counts)={sum(row_counts)} != pins={pins}")
+        errors.append(f"{cid}: sum(contacts_per_row)={sum(row_counts)} != total_contacts={pins}")
 
-    # Check D-Sub pattern: staggered rows (odd indices) should have <= pins
-    # than adjacent non-staggered rows
-    if len(row_counts) >= 2:
-        for i in range(1, len(row_counts), 2):  # Odd indices (staggered rows)
-            staggered_count = row_counts[i]
-            # Compare with previous row (always exists)
-            if staggered_count > row_counts[i - 1]:
-                errors.append(
-                    f"{cid}: staggered row {i} has {staggered_count} pins > "
-                    f"row {i-1} with {row_counts[i-1]} pins"
-                )
-            # Compare with next row if exists
-            if i + 1 < len(row_counts) and staggered_count > row_counts[i + 1]:
-                errors.append(
-                    f"{cid}: staggered row {i} has {staggered_count} pins > "
-                    f"row {i+1} with {row_counts[i+1]} pins"
-                )
+    if row_counts and rows != len(row_counts):
+        errors.append(f"{cid}: rows={rows} != len(contacts_per_row)={len(row_counts)}")
 
     return errors
 
 
-def load_specs() -> List[DSubSpec]:
-    if not CATALOG_PATH.exists():
-        raise SystemExit(f"Missing catalog: {CATALOG_PATH}")
-    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+def load_specs(catalog: Optional[dict[str, Any]] = None) -> List[DSubSpec]:
+    resolved_catalog = catalog or build_catalog()
 
-    # Validate all connectors first
-    all_errors = []
-    for item in catalog.get("connectors", []):
+    all_errors: List[str] = []
+    for item in resolved_catalog.get("connectors", []):
         all_errors.extend(validate_connector(item))
     if all_errors:
         print("Catalog validation errors:")
@@ -502,38 +642,65 @@ def load_specs() -> List[DSubSpec]:
         raise SystemExit("Fix catalog errors before generating SVGs")
 
     specs: List[DSubSpec] = []
-    for item in catalog.get("connectors", []):
-        row_counts = item.get("row_counts")
-        rows = item.get("rows") or (len(row_counts) if row_counts else item.get("rows"))
-        if rows is None:
-            raise SystemExit(f"Connector {item.get('id')} missing rows")
-        if row_counts and len(row_counts) != rows:
-            raise SystemExit(f"Connector {item.get('id')} row_counts length != rows")
-        specs.append(DSubSpec(
-            label=item["name"],
-            file_tag=item["id"],
-            pin_count=item["pins"],
-            rows=rows,
-            row_counts=row_counts,
-            row_offsets=item.get("row_offsets"),
-            shell_size=item["shell"],
-            mounting_hole_pitch_mm=item["mounting_hole_pitch_mm"],
-            flange_outer_width_mm=item["flange_outer_width_mm"],
-            shell_height_mm=item.get("shell_height_mm"),
-            screw_hole_dia_mm=item.get("screw_hole_dia_mm"),
-            h_pitch_mm=item["h_pitch_mm"],
-            v_pitch_mm=item["v_pitch_mm"],
-        ))
+    for item in resolved_catalog.get("connectors", []):
+        insert = item.get("insert") or {}
+        shell = item.get("shell") or {}
+        flange = shell.get("flange") or {}
+        contacts = item.get("contacts") or {}
+        electrical = item.get("electrical") or {}
+
+        male = contacts.get("male_pin_diameter_mm") or {}
+        female = contacts.get("female_entry_diameter_mm") or {}
+
+        specs.append(
+            DSubSpec(
+                label=item.get("name") or item.get("designation") or item.get("id"),
+                designation=item.get("designation") or item.get("id"),
+                density=item.get("density") or "standard",
+                file_tag=item.get("asset_tag") or item.get("id"),
+                pin_count=int(insert.get("total_contacts")),
+                rows=int(insert.get("rows")),
+                row_counts=insert.get("contacts_per_row"),
+                row_offsets=item.get("row_offsets"),
+                row_offset_mm=insert.get("row_offset_mm"),
+                shell_size=shell.get("letter"),
+                mounting_hole_pitch_mm=float(flange.get("mounting_hole_spacing_mm")),
+                flange_outer_width_mm=float(flange.get("outer_width_mm")),
+                shell_height_mm=float(flange.get("outer_height_mm")),
+                screw_hole_dia_mm=float(flange.get("mounting_hole_diameter_mm")),
+                h_pitch_mm=float((insert.get("pitch_mm") or {}).get("x")),
+                v_pitch_mm=float((insert.get("pitch_mm") or {}).get("y")),
+                contact_size=str(insert.get("contact_size") or "20"),
+                numbering_front=str((insert.get("numbering") or {}).get("front_view") or ""),
+                numbering_solder=str((insert.get("numbering") or {}).get("solder_side_view") or ""),
+                panel_cutout=shell.get("panel_cutout_trapezoid_mm"),
+                contact_male_min_mm=(float(male.get("min")) if male.get("min") is not None else None),
+                contact_male_max_mm=(float(male.get("max")) if male.get("max") is not None else None),
+                contact_female_entry_min_mm=(float(female.get("min")) if female.get("min") is not None else None),
+                electrical_max_current_a=(
+                    float(electrical.get("max_current_a_per_contact"))
+                    if electrical.get("max_current_a_per_contact") is not None
+                    else None
+                ),
+                electrical_dwv_v=(
+                    float(electrical.get("dielectric_withstand_v_rms_60hz_sea_level"))
+                    if electrical.get("dielectric_withstand_v_rms_60hz_sea_level") is not None
+                    else None
+                ),
+                standards=[str(v) for v in (item.get("standards") or [])],
+            )
+        )
+
     return specs
 
 
-def generate_all(out_dir: Path, include_caption: bool = True) -> int:
+def generate_all(out_dir: Path, catalog: Optional[dict[str, Any]] = None, include_caption: bool = True) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     genders = ["male", "female"]
     views = ["outside", "solder"]
 
     written = 0
-    for spec in load_specs():
+    for spec in load_specs(catalog):
         for gender in genders:
             for view in views:
                 svg = generate_svg(spec, gender, view, include_caption=include_caption)

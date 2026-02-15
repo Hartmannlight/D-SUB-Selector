@@ -2,7 +2,7 @@ name: Deploy Pages
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "beta"]
   workflow_dispatch:
 
 permissions:
@@ -18,18 +18,49 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout stable source (main)
         uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable-src
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Build site
+
+      - name: Build stable site
+        working-directory: stable-src
         run: python scripts/build.py
+
+      - name: Prepare Pages artifact root
+        run: |
+          mkdir -p site
+          cp -R stable-src/dist/. site/
+
+      - name: Checkout beta source (beta)
+        id: checkout_beta
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: beta
+          path: beta-src
+
+      - name: Build beta site
+        if: steps.checkout_beta.outcome == 'success'
+        working-directory: beta-src
+        run: python scripts/build.py
+
+      - name: Add beta site under /beta
+        if: steps.checkout_beta.outcome == 'success'
+        run: |
+          mkdir -p site/beta
+          cp -R beta-src/dist/. site/beta/
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
 
   deploy:
     needs: build

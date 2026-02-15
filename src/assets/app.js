@@ -1,6 +1,7 @@
 const catalogPath = "data/catalog.json";
 const svgBasePath = "assets/svg";
 const NOTES_STORAGE_KEY = "dsub-connector-notes";
+const LAYER_PREFS_KEY = "dsub-layer-visibility";
 
 const elType = document.getElementById("selType");
 const elGender = document.getElementById("selGender");
@@ -10,6 +11,7 @@ const elStatus = document.getElementById("status");
 const elSpecInfo = document.getElementById("specInfo");
 const elNotesArea = document.getElementById("notesArea");
 const elNotesStatus = document.getElementById("notesStatus");
+const elLayerControls = document.getElementById("layerControls");
 
 const btnOpenSvg = document.getElementById("btnOpenSvg");
 const btnDownloadSvg = document.getElementById("btnDownloadSvg");
@@ -17,6 +19,7 @@ const btnDownloadSvg = document.getElementById("btnDownloadSvg");
 const svgCache = new Map();
 let catalog = null;
 let saveTimeout = null;
+let layerPrefs = {};
 
 function setStatus(message, level = "") {
   elStatus.className = "status" + (level ? ` ${level}` : "");
@@ -33,9 +36,19 @@ function optionize(select, items, getId, getName) {
   }
 }
 
-function getCurrentKey() {
-  if (!catalog) return null;
-  return `${elType.value}_${elGender.value}_${elView.value}`;
+function sanitizeAssetTag(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function formatNumber(value, digits = 3) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return "n/a";
+  }
+  return Number(value).toFixed(digits);
 }
 
 function getCurrentSpec() {
@@ -43,8 +56,16 @@ function getCurrentSpec() {
   return catalog.connectors.find((c) => c.id === elType.value) || null;
 }
 
+function getCurrentAssetKey() {
+  const spec = getCurrentSpec();
+  if (!spec) return null;
+  const base = spec.asset_tag || sanitizeAssetTag(spec.id);
+  return `${base}_${elGender.value}_${elView.value}`;
+}
+
 function getNotesKey() {
-  return elType.value || null;
+  const spec = getCurrentSpec();
+  return spec ? spec.id : null;
 }
 
 function loadAllNotes() {
@@ -112,6 +133,80 @@ function scheduleNoteSave() {
   }, 500);
 }
 
+function loadLayerPrefs() {
+  try {
+    const stored = localStorage.getItem(LAYER_PREFS_KEY);
+    layerPrefs = stored ? JSON.parse(stored) : {};
+  } catch {
+    layerPrefs = {};
+  }
+}
+
+function saveLayerPrefs() {
+  try {
+    localStorage.setItem(LAYER_PREFS_KEY, JSON.stringify(layerPrefs));
+  } catch {
+    // Ignore storage errors; visibility still works for this session.
+  }
+}
+
+function getLayers() {
+  if (catalog?.layers?.length) return catalog.layers;
+  return [];
+}
+
+function isLayerEnabled(layer) {
+  if (Object.prototype.hasOwnProperty.call(layerPrefs, layer.id)) {
+    return Boolean(layerPrefs[layer.id]);
+  }
+  return layer.default_enabled !== false;
+}
+
+function applyLayerVisibility() {
+  const svg = elPreview.querySelector("svg");
+  if (!svg) return;
+
+  for (const layer of getLayers()) {
+    const visible = isLayerEnabled(layer);
+    const nodes = svg.querySelectorAll(`[data-layer="${layer.id}"]`);
+    for (const node of nodes) {
+      node.style.display = visible ? "" : "none";
+    }
+  }
+}
+
+function renderLayerControls() {
+  const layers = getLayers();
+  elLayerControls.innerHTML = "";
+  if (!layers.length) {
+    return;
+  }
+
+  for (const layer of layers) {
+    const id = `layer_${layer.id}`;
+    const label = document.createElement("label");
+    label.className = "layer-option";
+    label.setAttribute("for", id);
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    input.checked = isLayerEnabled(layer);
+    input.addEventListener("change", () => {
+      layerPrefs[layer.id] = input.checked;
+      saveLayerPrefs();
+      applyLayerVisibility();
+    });
+
+    const text = document.createElement("span");
+    text.textContent = layer.name || layer.id;
+
+    label.appendChild(input);
+    label.appendChild(text);
+    elLayerControls.appendChild(label);
+  }
+}
+
 async function loadCatalog() {
   const res = await fetch(catalogPath);
   if (!res.ok) {
@@ -139,12 +234,25 @@ function updateSpecInfo() {
     elSpecInfo.textContent = "";
     return;
   }
-  const counts = spec.row_counts ? spec.row_counts.join("-") : "auto";
-  elSpecInfo.textContent = `${spec.pins} pins · ${spec.rows} rows (${counts}) · ${spec.shell} shell`;
+
+  const insert = spec.insert || {};
+  const counts = Array.isArray(insert.contacts_per_row) ? insert.contacts_per_row.join("-") : "n/a";
+  const shell = spec.shell?.letter || "?";
+  const px = formatNumber(insert.pitch_mm?.x);
+  const py = formatNumber(insert.pitch_mm?.y);
+
+  elSpecInfo.textContent = `${insert.total_contacts || "?"} pins | ${insert.rows || "?"} rows (${counts}) | shell ${shell} | pitch ${px}/${py} mm`;
+}
+
+function getVisibleSvgText() {
+  const svg = elPreview.querySelector("svg");
+  if (!svg) return null;
+  const serializer = new XMLSerializer();
+  return serializer.serializeToString(svg);
 }
 
 async function render() {
-  const key = getCurrentKey();
+  const key = getCurrentAssetKey();
   if (!key) return;
 
   updateSpecInfo();
@@ -159,13 +267,16 @@ async function render() {
   }
 
   elPreview.innerHTML = svgText;
+  applyLayerVisibility();
   setStatus(`Loaded: ${key}`, "ok");
 }
 
 async function openSvg() {
-  const key = getCurrentKey();
+  const visibleSvg = getVisibleSvgText();
+  const key = getCurrentAssetKey();
   if (!key) return;
-  const svgText = await loadSvgText(key);
+
+  const svgText = visibleSvg || (await loadSvgText(key));
   if (!svgText) return;
 
   const blob = new Blob([svgText], { type: "image/svg+xml" });
@@ -175,9 +286,11 @@ async function openSvg() {
 }
 
 async function downloadSvg() {
-  const key = getCurrentKey();
+  const visibleSvg = getVisibleSvgText();
+  const key = getCurrentAssetKey();
   if (!key) return;
-  const svgText = await loadSvgText(key);
+
+  const svgText = visibleSvg || (await loadSvgText(key));
   if (!svgText) return;
 
   const blob = new Blob([svgText], { type: "image/svg+xml" });
@@ -199,9 +312,13 @@ async function init() {
     return;
   }
 
-  optionize(elType, catalog.connectors, (x) => x.id, (x) => `${x.name} (${x.pins})`);
+  loadLayerPrefs();
+
+  optionize(elType, catalog.connectors, (x) => x.id, (x) => x.name || x.designation || x.id);
   optionize(elGender, catalog.genders, (x) => x.id, (x) => x.name);
   optionize(elView, catalog.views, (x) => x.id, (x) => x.name);
+
+  renderLayerControls();
 
   elType.addEventListener("change", render);
   elGender.addEventListener("change", render);

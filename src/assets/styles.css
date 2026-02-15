@@ -122,6 +122,39 @@ select {
   margin-bottom: 16px;
 }
 
+.layer-controls {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+  margin: 0 0 14px;
+  background: #fcfcfb;
+}
+
+.layer-controls legend {
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.layer-options {
+  display: grid;
+  gap: 8px;
+}
+
+.layer-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.layer-option input[type="checkbox"] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
 button {
   border: none;
   border-radius: 999px;

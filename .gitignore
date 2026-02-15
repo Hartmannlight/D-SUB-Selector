@@ -4,4 +4,7 @@ __pycache__/
 *.pyc
 dist/
 dist_build/
+dist_build_*/
 dist__old_*/
+.claude/
+nul
